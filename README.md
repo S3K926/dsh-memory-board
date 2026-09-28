@@ -39,12 +39,14 @@
 
 | 键 | 默认 | 说明 |
 |---|---|---|
-| `root` | 无 | 档案根。**不写也行**：按 `root` → `DSH_MEMORY_ROOT` → `~/.dsh/memory` 的顺序找；全不中就报"认不出"，面板上可以手填。**故意没有"扫盘找根"这一步。** |
+| `root` | 无 | 档案根。**不写也行**：按 `root` → `DSH_MEMORY_ROOT` → `$DSH_HOME/memory` 的顺序找；全不中就报"认不出"，面板上可以手填。**故意没有"扫盘找根"这一步。** |
 | `readOnly` | `true` | `true` = 写操作**彻底不可用**（面板上的"打开写入"连点都点不开）。想能写：显式写 `false`，重启，再在面板上点一次"打开写入"。 |
-| `templatesDir` | 无 | 新设备铺底用哪套模板。四级优先级：这一项 → `DSH_MEMORY_TEMPLATES` → `~/.dsh/memory-templates` → 插件自带 `templates/basic`。目录里只要有 `身份.md` 就算数，缺件用自带模板补。 |
+| `templatesDir` | 无 | 新设备铺底用哪套模板。四级优先级：这一项 → `DSH_MEMORY_TEMPLATES` → `$DSH_HOME/memory-templates` → 插件自带 `templates/basic`。目录里只要有 `身份.md` 就算数，缺件用自带模板补。 |
 | `device` | `【新设备】` | 铺底时的默认设备标签（面板上还能现改）。会替换骨架里的 `【设备】`。 |
 
-**代码里没有任何个人路径**：默认根是 `path.join(os.homedir(), '.dsh', 'memory')`。
+**代码里没有任何个人路径**：家目录按 `$DSH_HOME` → `~/.dsh` 的顺序解析（`harnessHome()`），
+所以便携部署 / 多实例时，档案与面板状态都跟着那个家走。
+面板自己的状态文件是 `$DSH_HOME/memory-panel.json`（没设 `DSH_HOME` 时 = `~/.dsh/memory-panel.json`）。
 
 ## 三、面板五页
 
