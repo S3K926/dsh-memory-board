@@ -1,0 +1,1 @@
+{"content": "【占位】这是新设备铺底时写入的骨架标记，不是任何人的记忆，也没有任何经历。真实事件流要靠回流包导入，或由 生长/记忆.py sync 追加。本行 id 固定为 bootstrap-0，不会与 diary-#N / growth-<hash> 撞号。", "id": "bootstrap-0", "importance": 1, "kind": "system", "kw": ["占位", "骨架"], "ref": "记忆/事件流.jsonl", "schema": "growth-memory/1", "source": "system", "topic": "【占位】新设备骨架", "ts": ""}

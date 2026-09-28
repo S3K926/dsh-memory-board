@@ -1,0 +1,44 @@
+{
+  "name": "dsh-memory-board",
+  "version": "1.0.0",
+  "description": "本地记忆（Local Memory）· Memory panel for the DSH web settings page: read, search, append and carefully edit a file-based memory archive.",
+  "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "cordis-plugin",
+    "memory",
+    "settings"
+  ],
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "lib",
+    "templates",
+    "README.md",
+    "LICENSE",
+    "cordis.patch.example.yml"
+  ],
+  "meta": {
+    "title": "记忆面板",
+    "description": "本地记忆（Local Memory）· 把一份基于文件的记忆档案搬进设置页：概览 / 日记 / 状态 / 事件流 / 搜索，读写都带守卫。"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.2"
+  }
+}

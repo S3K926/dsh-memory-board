@@ -1,0 +1,37 @@
+# dsh-memory-board —— 配置模板（仓库里给别人看的那一份）
+#
+# 用法：把本文件复制成 cordis.patch.yml，改掉 root，重启 DSH。
+# cordis.patch.yml 是本机配置，不进仓库（见 .gitignore）；本文件才是仓库里的样板。
+#
+# 说明：bundle 的 patch 就是"往 Loader 的条目表里插一行"。
+# `id` 随便起（唯一就行），`name` 必须是包名（这里就是 dsh-memory-board）。
+
+- insert:
+    - id: memory-panel
+      name: 'dsh-memory-board'
+      config:
+        # 档案根。**认根只认特征文件**：一个目录里同时有
+        #   身份.md + 日记.md + 生长\状态.md
+        # 才算一个档案根。认不出时面板会显示"认不出"并让你手填 —— 它不猜。
+        #
+        # 不写这一项也可以，按下面的顺序找：
+        #   1) 这一项 root
+        #   2) 环境变量 DSH_MEMORY_ROOT
+        #   3) 默认 ~/.dsh/memory
+        # 三个都认不出 → 面板让你手填（故意没有"扫盘"这一步）。
+        root: '~/.dsh/memory'
+
+        # 只读开关。默认 true（安全默认）：写操作彻底不可用，面板上的"打开写入"连点都点不开。
+        # 想能写：这里显式写 false，重启，然后在面板上再点一次"打开写入"。
+        readOnly: true
+
+        # 新设备铺底用哪一套模板。留空 = 按四级优先级找：
+        #   1) 这一项 templatesDir
+        #   2) 环境变量 DSH_MEMORY_TEMPLATES
+        #   3) ~/.dsh/memory-templates（放一套进去就自动生效）
+        #   4) 插件自带 templates/basic
+        # 目录里只要有 身份.md 就算数，缺的文件用自带模板补 —— 所以可以只换身份。
+        # templatesDir: '~/.dsh/memory-templates'
+
+        # 铺底时的默认设备标签（面板上还能现改）。会替换骨架里的【设备】占位。
+        # device: '【新设备】'
