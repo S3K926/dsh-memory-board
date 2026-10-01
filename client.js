@@ -76,19 +76,81 @@ window.__ModuleLoader__.load({
       return binding && binding.props ? binding.props.inputActions : undefined;
     }
 
+    /**
+     * 走**新 API** 拿输入动作（**两段式**，别只写第一段）：
+     *   ① `ctx.sessions.using(sessionId, { source }, ref => …)` 拿一个 Session 引用；
+     *   ② `ctx.uiSession.bindingSource(ref).getSnapshot().props.inputActions` 才是输入动作。
+     *
+     * 🔴 2026-10-01 修（用户原话「那些指令点了没反应也修修」）：
+     *   老写法依赖的 `uiSession.resolve(sessionId)` 在 DSH 升级后**已经不在 UiSession 上了**
+     *   （现在只有 bindingSource / provide / registerPendingInteraction / sessionStatus），
+     *   所以按下去只会打一句「这个会话还没挂上输入框」、什么都不发生 —— 实测控制台抓到了这条警告。
+     *   ⚠️ 第二版踩的坑：`ref.binding` 是 **SessionBinding**（只有 sessionId / session / eventSource / ctx），
+     *   **它没有 props** —— 直接读 `ref.binding.props` 永远是空，还是同一句警告。
+     *   props（含 inputActions）在 `StandardSourceBinding` 上，取值方式是 `getSnapshot()`
+     *   （照官方 dsh-client-ui-renderer 里 `source.getSnapshot()` 的用法）。
+     */
+    function withInputActions(ctx, session, text, fn) {
+      const sessionId = session && session.sessionId;
+      if (sessionId === undefined || sessionId === null) {
+        console.warn(QUICK_LOG + '「' + text + '」没发出去：命令里没有 sessionId');
+        return;
+      }
+      let sessions;
+      let uiSession;
+      try {
+        sessions = ctx && typeof ctx.get === 'function' ? ctx.get('sessions') : undefined;
+        uiSession = ctx && typeof ctx.get === 'function' ? ctx.get('uiSession') : undefined;
+      } catch {
+        sessions = undefined;
+        uiSession = undefined;
+      }
+      if (!sessions || typeof sessions.using !== 'function') {
+        console.warn(QUICK_LOG + '「' + text + '」没发出去：拿不到 sessions 服务');
+        return;
+      }
+      sessions
+        .using(sessionId, { source: 'memory-board-quick-word' }, (ref) => {
+          let actions;
+          try {
+            const source = uiSession && typeof uiSession.bindingSource === 'function' ? uiSession.bindingSource(ref) : undefined;
+            const binding = source && typeof source.getSnapshot === 'function' ? source.getSnapshot() : undefined;
+            const props = binding ? binding.props : undefined;
+            actions = props ? props.inputActions : undefined;
+          } catch (error) {
+            console.warn(QUICK_LOG + '取输入框失败：' + (error && error.message ? error.message : error));
+            return;
+          }
+          if (actions === undefined || actions === null) {
+            console.warn(QUICK_LOG + '「' + text + '」没发出去：这个会话还没挂上输入框');
+            return;
+          }
+          fn(actions);
+        })
+        .catch((error) => console.warn(QUICK_LOG + '发送失败：' + (error && error.message ? error.message : error)));
+    }
+
     /** 发一条词：写草稿 + 提交（提交走队列，正忙时会排队）。拿不到输入框就只留一行 warning。 */
-    function sendQuickWord(uiSession, session, text) {
-      const actions = quickWordInputActions(uiSession, session && session.sessionId);
+    function sendQuickWord(first, session, text) {
+      const doSend = (actions) => {
+        try {
+          actions.setDraft(text);
+          actions.submit();
+        } catch (error) {
+          console.warn(QUICK_LOG + '发送失败：' + (error && error.message ? error.message : error));
+        }
+      };
+      // 第一个参数是 ctx（带 .get）→ 走新 API；是 uiSession → 走老路（DSH 新版下老路会打警告）
+      if (first && typeof first.get === 'function') {
+        withInputActions(first, session, text, doSend);
+        return;
+      }
+      const actions = quickWordInputActions(first, session && session.sessionId);
       if (actions === undefined || actions === null) {
         console.warn(QUICK_LOG + '「' + text + '」没发出去：这个会话还没挂上输入框');
         return;
       }
-      try {
-        actions.setDraft(text);
-        actions.submit();
-      } catch (error) {
-        console.warn(QUICK_LOG + '发送失败：' + (error && error.message ? error.message : error));
-      }
+      doSend(actions);
     }
 
     // ───────────────────────────────────────────── 样式：只有主题令牌
@@ -1308,9 +1370,11 @@ window.__ModuleLoader__.load({
         }
 
         // 输入框 ➕ 指令菜单里的快捷词（使用者 2026-09-27 点名；表见本文件上方的 QUICK_WORDS）。
-        // 用 ctx.inject 等两个服务，不在同步阶段直接读它们 —— 服务没到齐就当没这回事，面板照常。
+        // 用 ctx.inject 等服务，不在同步阶段直接读它们 —— 服务没到齐就当没这回事，面板照常。
+        // 🔴 2026-10-01：这里要 `sessions`（新 API 走 `ctx.sessions.using(...)` 拿输入动作），
+        //   所以把它一起列进 inject；`uiSession` 仍留着给老的兼容路用。
         try {
-          ctx.inject(['commandUi', 'uiSession'], (scope) => {
+          ctx.inject(['commandUi', 'uiSession', 'sessions'], (scope) => {
             for (const item of QUICK_WORDS) {
               try {
                 scope.effect(
@@ -1321,7 +1385,7 @@ window.__ModuleLoader__.load({
                       description: () => item.desc,
                       ui: {
                         kind: 'action',
-                        run: (session) => sendQuickWord(scope.uiSession, session, item.word),
+                        run: (session) => sendQuickWord(scope, session, item.word),
                       },
                     }),
                   'dsh-memory-board: /' + item.word,
