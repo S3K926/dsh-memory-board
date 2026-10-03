@@ -18,6 +18,8 @@ window.__ModuleLoader__.load({
 
     const API = '/api/memory';
     const MISSING = '（读不到）';
+    // 摘要两档兜底：字段里有就说有；一条都摘不出来才说「没有摘要」（不再是「读不到」——读不到是取数失败的意思）。
+    const NO_BRIEF = '（无摘要）';
 
     const TABS = [
       { id: 'overview', label: '概览' },
@@ -28,6 +30,38 @@ window.__ModuleLoader__.load({
     ];
 
     const SYNC_WHICH = ['合并记忆', '合并日记', '合并状态', '回流包'];
+
+    // ─────────────────────── 简单 / 完整 两种显示模式（2026-10-03 加）
+    //
+    // 使用者 2026-10-03 的原话：概览页那四张卡片铺满技术细节（连续性 / 元信息 / 字节 / 最后修改），看不懂。
+    // 于是分两档，只影响这一层的渲染，不碰 router.js 与 lib/ 里任何数据逻辑：
+    //   简单（默认）= 四张一句话卡片 + 最近 10 条日记（可逐条展开看全文，底部「更多 →」跳到完整模式的日记页）
+    //                  + 当前状态（可展开看 mood_base 全文与挂着的完整列表）+ 一个搜索框；
+    //   完整         = 原来那五个分段，新增/编辑/删除/同步/铺底/认领/追加生长记录一个不少。
+    // 选择存 localStorage；读不到或存不了都退回「简单」，绝不因为一个偏好把面板弄崩。
+    const MODE_KEY = 'dsh-memory-board.mode';
+    const MODES = [
+      { id: 'simple', label: '简单' },
+      { id: 'full', label: '完整' },
+    ];
+
+    function readMode() {
+      try {
+        const store = globalThis.localStorage;
+        return store && store.getItem(MODE_KEY) === 'full' ? 'full' : 'simple';
+      } catch {
+        return 'simple';
+      }
+    }
+
+    function saveMode(mode) {
+      try {
+        const store = globalThis.localStorage;
+        if (store) store.setItem(MODE_KEY, mode);
+      } catch {
+        /* 存不了就算了：下次打开回到简单 */
+      }
+    }
 
     // 客户端根上下文：apply() 里存下来。目录选择器要用它去软访问 uiWorkspace ——
     // 本插件只 inject 了 slots，绝不为了一个选择器去加 inject（加了就等于把整页押在别人的服务上）。
@@ -693,6 +727,284 @@ window.__ModuleLoader__.load({
       );
     }
 
+    // ───────────────────────────────────────────── 简单模式那一页（2026-10-03 加）
+    //
+    // 只吃 Host 现成的只读口子，不新增接口：GET /info（四个数字 + mood_base + unfinished 条数）、
+    // GET /diary（列表，取最新 10 条的 seq/date）、GET /diary?seq=N（正文：摘要 + 展开看全文）、
+    // GET /state（只在展开「当前状态」那一下才读：mood_base 全文 + 挂着的完整列表）。
+
+    /** 简单模式「最近日记」默认显示几条（2026-10-03 使用者要求 3 → 10）。 */
+    const RECENT_COUNT = 10;
+
+    /** 三种"不是正文"的行：整行的 `**字段**`、`### 标题`、`---` 分隔线。 */
+    const FIELD_LINE = /^\*\*.+\*\*[ \t]*$/;
+    const HEAD_LINE = /^#{1,6}/;
+    const RULE_LINE = /^-{3,}[ \t]*$/;
+
+    /** 摘要太长就掐断，留个省略号。 */
+    const clip = (text) => (text.length > 80 ? `${text.slice(0, 80)}…` : text);
+
+    // ── 展开一条日记时的"人话"渲染（2026-10-03 使用者点名：不要露 ### 标题行、**event_description** 这类技术标记）
+    //
+    // 只动显示这一层：原文一个字都不改写，读的还是 GET /diary?seq=N 吐回来的那串 text。
+    // 认不出字段（老日记的字段名本来就不规范）就返回空 fields，由调用方退回铺原文 —— 宁可显示半成品，也不显示空白。
+
+    /** 六个字段名的中文标签。表里没有的字段名照原样显示（只去掉 ** 那两颗星）。 */
+    const FIELD_LABELS = {
+      event_description: '这一轮在做什么',
+      user_mood: '用户心情',
+      mood_tags: '心情标签',
+      notes: '笔记',
+      lively_details: '生动的细节',
+      mood_tail: '收尾心情',
+    };
+
+    /** 整行 `**字段名**`：里面允许中文等任意字符（老日记有写成「这一轮干了什么」的）。 */
+    const FIELD_NAME_LINE = /^\*\*([^*]+)\*\*[ \t]*$/;
+
+    /** 标题行两种形状（设备那段可能没有），按全角 ｜ 切段 —— 与 lib/parse.js 同一套认法。 */
+    const DIARY_TITLE_LINE = /^###[ \t]*#([0-9]+)[ \t]*[｜|][ \t]*(.*)$/;
+
+    /**
+     * 把一条日记原文拆成 `{ title, fields: [{ label, body }] }`：
+     *   · title = `#N · 日期 时间 · 设备`（不带 `###`、不带 `full` 那段；没有设备就少这一段）；
+     *   · fields = 字段按原文顺序，字段名换成中文标签，正文到下一个字段行 / `---` / 下一个标题行为止。
+     * 正文不做完整 markdown 渲染，只原样保留换行（使用者要的就是"简单处理"）。
+     */
+    function parseDiary(text) {
+      if (typeof text !== 'string' || text === '') return { title: '', fields: [] };
+      const lines = text.split(/\r?\n/);
+      let title = '';
+      const fields = [];
+      let name = null;
+      let buffer = [];
+      const flush = () => {
+        if (name === null) return;
+        const body = buffer.join('\n').replace(/\s+$/, '');
+        if (body !== '') fields.push({ label: FIELD_LABELS[name] || name, body });
+        buffer = [];
+      };
+      for (const line of lines) {
+        const head = DIARY_TITLE_LINE.exec(line);
+        if (head) {
+          flush();
+          name = null;
+          if (title === '') {
+            const parts = head[2].split(/[｜|]/).map((part) => part.trim());
+            const when = `${parts[0] || ''} ${parts[1] || ''}`.trim();
+            const device = parts.length >= 4 ? parts[2] : '';
+            title = `#${head[1]}${when === '' ? '' : ` · ${when}`}${device === '' ? '' : ` · ${device}`}`;
+          }
+          continue;
+        }
+        const field = FIELD_NAME_LINE.exec(line);
+        if (field) {
+          flush();
+          name = field[1].trim();
+          continue;
+        }
+        if (RULE_LINE.test(line)) {
+          flush();
+          name = null;
+          continue;
+        }
+        if (name !== null) buffer.push(line);
+      }
+      flush();
+      return { title, fields };
+    }
+
+    /** 展开后的正文：标题一行 + 每个字段「小标题一行 + 正文一段」，字段之间留白。
+     *  一个字段都认不出就退回原来的整块原文（pre），兜底不显示空白。 */
+    function DiaryBody({ text }) {
+      const parsed = useMemo(() => parseDiary(text), [text]);
+      if (parsed.fields.length === 0) {
+        return h('pre', { style: { ...S.pre, maxHeight: '320px' } }, text === '' ? NO_BRIEF : text);
+      }
+      return h(
+        'div',
+        { style: { display: 'flex', flexDirection: 'column', gap: '12px', maxHeight: '320px', overflowY: 'auto', padding: '10px 12px', borderRadius: '8px', border: '0.5px solid var(--dsw-alias-border-l2)', background: 'var(--dsw-alias-bg-l1)' } },
+        parsed.title === '' ? null : h('div', { style: { fontSize: '13px', fontWeight: 600, color: 'var(--dsw-alias-label-primary)' } }, parsed.title),
+        parsed.fields.map((field, index) =>
+          h(
+            'div',
+            { key: `${index}-${field.label}`, style: { display: 'flex', flexDirection: 'column', gap: '4px', minWidth: 0 } },
+            h('div', { style: S.label }, field.label),
+            h('div', { style: { fontSize: '12.5px', lineHeight: 1.65, whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: 'var(--dsw-alias-label-primary)' } }, field.body),
+          ),
+        ),
+      );
+    }
+
+    /**
+     * 从一条日记正文里摘一行摘要，两条路都不成才说「（无摘要）」：
+     *   ① 认 `**event_description**`：到下一个字段行或 `---` 为止（老逻辑保留）；
+     *   ② 认不到（**老日记字段名不规范**，比如写成了「这一轮干了什么」「挂着的」）——
+     *      退到正文里第一条真内容行：跳过空行 / `###` 标题行 / `**字段**` 行 / `---` 行。
+     * 🔴 2026-10-03 修：以前 ② 这条路直接返回「（读不到）」，看着像取数失败，其实只是字段名换了 —— 使用者就是这么反馈的。
+     */
+    function eventBrief(text) {
+      if (typeof text !== 'string' || text === '') return NO_BRIEF;
+      const lines = text.split(/\r?\n/);
+      const at = lines.findIndex((line) => /^\*\*event_description\*\*[ \t]*$/.test(line));
+      const field = [];
+      for (let index = at + 1; at >= 0 && index < lines.length; index += 1) {
+        if (FIELD_LINE.test(lines[index]) || RULE_LINE.test(lines[index])) break;
+        const line = lines[index].trim();
+        if (line !== '') field.push(line);
+      }
+      if (field.length > 0) return clip(field.join(' '));
+      for (const raw of lines) {
+        const line = raw.trim();
+        if (line === '' || HEAD_LINE.test(line) || FIELD_LINE.test(line) || RULE_LINE.test(line)) continue;
+        return clip(line);
+      }
+      return NO_BRIEF;
+    }
+
+    /** 最近 10 条日记：日期 + 一行摘要；点一下展开这一条的全文，再点收起。正文一条的文字都不改写。 */
+    function RecentDiary({ entries, onMore }) {
+      const wanted = (entries || []).slice(-RECENT_COUNT).reverse();
+      const wantedKey = wanted.map((entry) => entry.seq).join(',');
+      const [lines, setLines] = useState([]);
+      const [loading, setLoading] = useState(false);
+      const [error, setError] = useState(null);
+      // 展开到哪几条：按 seq 记，多条同时展开互不影响；换一批日记时旧的键自己留着也无害。
+      const [openMap, setOpenMap] = useState({});
+
+      useEffect(() => {
+        if (wanted.length === 0) {
+          setLines([]);
+          setLoading(false);
+          setError(null);
+          return undefined;
+        }
+        let alive = true;
+        setLoading(true);
+        Promise.all(
+          wanted.map(async (entry) => {
+            const response = await fetch(`${API}/diary?seq=${encodeURIComponent(entry.seq)}`, { headers: { accept: 'application/json' } });
+            const body = await response.json().catch(() => null);
+            const text = body && typeof body.text === 'string' ? body.text : '';
+            return { seq: entry.seq, date: entry.date, brief: eventBrief(text), text };
+          }),
+        )
+          .then((items) => {
+            if (!alive) return;
+            setLines(items);
+            setLoading(false);
+          })
+          .catch((failure) => {
+            if (!alive) return;
+            setError(String((failure && failure.message) || failure));
+            setLoading(false);
+          });
+        return () => {
+          alive = false;
+        };
+      }, [wantedKey]);
+
+      const total = (entries || []).length;
+
+      return h(
+        'div',
+        { style: { display: 'flex', flexDirection: 'column', gap: '2px' } },
+        lines.map((item) => {
+          const open = openMap[item.seq] === true;
+          return h(
+            'div',
+            { key: item.seq, style: { ...S.listRow, flexDirection: 'column', alignItems: 'stretch', gap: '4px' }, onClick: () => setOpenMap((map) => ({ ...map, [item.seq]: !map[item.seq] })) },
+            h(
+              'div',
+              { style: { display: 'flex', gap: '10px', alignItems: 'baseline' } },
+              h('span', { style: S.listSide }, show(item.date)),
+              h('span', { style: { ...S.listMain, whiteSpace: 'normal' } }, show(item.brief)),
+              h('span', { style: { ...S.listSide, fontSize: '12px' } }, open ? '收起 ▲' : '展开 ▼'),
+            ),
+            open ? h(DiaryBody, { text: item.text }) : null,
+          );
+        }),
+        loading ? h('p', { style: S.hint }, '读中…') : null,
+        !loading && !error && lines.length === 0 ? h('p', { style: S.hint }, '一条日记都没有。') : null,
+        error ? h('p', { style: S.error }, error) : null,
+        total > 0
+          ? h(
+              'div',
+              { style: { ...S.toolbar, justifyContent: 'flex-end', paddingTop: '4px' } },
+              h('span', { style: S.hint }, `只显示最近 ${lines.length} 条（共 ${total} 条）`),
+              h('button', { type: 'button', style: S.button, onClick: onMore }, '更多 →'),
+            )
+          : null,
+      );
+    }
+
+    /** 「当前状态」：平时两句（心情底色 + 挂着几条），点展开看 mood_base 全文 + 挂着的完整列表。
+     *  GET /state 只在展开那一下才读 —— 折叠时不多打一次接口。 */
+    function CurrentState({ moodBase, unfinished, title = '当前状态' }) {
+      const [open, setOpen] = useState(false);
+      const detail = useApi('/state', open);
+      const meta = (detail.data || {}).meta || {};
+      const items = Array.isArray(meta.unfinished) ? meta.unfinished : [];
+      const full = typeof meta.moodBase === 'string' && meta.moodBase !== '' ? meta.moodBase : moodBase;
+      const count = unfinished === undefined || unfinished === null ? MISSING : `${unfinished} 条`;
+
+      return h(
+        Block,
+        { title, extra: h('button', { type: 'button', style: S.button, onClick: () => setOpen((value) => !value) }, open ? '收起' : '展开') },
+        h('p', { style: { ...S.hint, fontSize: '13px', color: 'var(--dsw-alias-label-primary)' } }, `心情底色：${show(moodBase)}`),
+        h('p', { style: S.hint }, `挂着的：${count}`),
+        open
+          ? h(
+              'div',
+              { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
+              h('span', { style: S.label }, '心情底色（全文）'),
+              h('pre', { style: { ...S.pre, maxHeight: '260px' } }, full === null || full === undefined || full === '' ? MISSING : full),
+              h('span', { style: S.label }, `挂着的（完整列表${count === MISSING ? '' : `：${count}`}）`),
+              h(Fail, { error: detail.error, loading: detail.loading && !detail.data }),
+              items.length === 0
+                ? h('p', { style: S.hint }, detail.data ? '列表是空的。' : '（还没读到）')
+                : h(
+                    'div',
+                    { style: { display: 'flex', flexDirection: 'column', gap: '4px' } },
+                    items.map((item, index) => h('div', { key: `${index}-${item}`, style: { fontSize: '12.5px', whiteSpace: 'pre-wrap', wordBreak: 'break-word' } }, item)),
+                  ),
+            )
+          : null,
+      );
+    }
+
+    /** 简单模式：四个分组（记忆概况 / 最近的日记 / 现在 / 搜索），设置页那种 label/value 行，全部只读。 */
+    function SimpleOverview({ info, onMore }) {
+      const list = useApi('/diary');
+      const data = info.data || {};
+      const diary = data.diary || {};
+      const state = data.state || {};
+      const growth = data.growth || {};
+      const stream = data.stream || {};
+      const entries = (list.data || {}).entries || [];
+
+      // 一行：左边 label、右边 value（带单位）。
+      const row = (label, value, unit) =>
+        h(Row, { label, value: value === undefined || value === null ? MISSING : `${value} ${unit}` });
+
+      return h(
+        'div',
+        { style: { display: 'flex', flexDirection: 'column', gap: '22px', paddingBottom: '8px' } },
+        h(Fail, { error: info.error, loading: info.loading && !info.data }),
+        h(
+          Block,
+          { title: '📊 记忆概况' },
+          row('日记', diary.count, '篇'),
+          row('状态', state.sections, '节'),
+          row('生长记录', growth.records, '行'),
+          row('事件流', stream.count, '条'),
+        ),
+        h(Block, { title: `📔 最近的日记（最近 ${Math.min(RECENT_COUNT, entries.length)} 条）` }, h(RecentDiary, { entries, onMore })),
+        h(CurrentState, { title: '🌤 现在', moodBase: state.moodBase, unfinished: state.unfinished }),
+        h(Block, { title: '🔍 搜索' }, h(SearchPane, null)),
+      );
+    }
+
     /** 追加一行生长记录。 */
     function GrowthAppend({ write, onDone }) {
       const [line, setLine] = useState('');
@@ -1281,6 +1593,12 @@ window.__ModuleLoader__.load({
 
     function MemoryPanel() {
       const [tab, setTab] = useState('overview');
+      // 简单 / 完整：默认简单，选择存 localStorage（读/存失败都退回简单）。
+      const [mode, setMode] = useState(readMode);
+      const pickMode = useCallback((next) => {
+        setMode(next);
+        saveMode(next);
+      }, []);
       // preset：顶部「在这里铺底」把目标目录递给概览里的铺底表单；locationNonce：铺完让顶部那行重读一次。
       const [preset, setPreset] = useState(null);
       const [locationNonce, setLocationNonce] = useState(0);
@@ -1302,37 +1620,72 @@ window.__ModuleLoader__.load({
           'div',
           { style: S.section },
           h('h2', { style: S.heading }, '本地记忆'),
-          h('p', { style: S.intro }, '记忆档案的看 / 搜 / 编 / 新增。文件仍是权威：不搬家、不建数据库、不改任何文件格式；跨设备合并仍走档案里原有的那几个脚本。'),
-          h(LocationBar, {
-            nonce: locationNonce,
-            onArchiveChanged: info.reload,
-            onScaffold: (target) => {
-              setPreset({ root: target, nonce: Date.now() });
-              setTab('overview');
-            },
-          }),
-          h('div', { style: S.metaRow }, h('span', null, `只读模式：${readOnly === null ? MISSING : readOnly ? '是' : '否'}`)),
-          h(Fail, { error: info.error, loading: info.loading && !info.data }),
-          h(WriteToggle, { onChanged: bumpWrite }),
+          mode === 'full'
+            ? h('p', { style: S.intro }, '记忆档案的看 / 搜 / 编 / 新增。文件仍是权威：不搬家、不建数据库、不改任何文件格式；跨设备合并仍走档案里原有的那几个脚本。')
+            : null,
           h(
             'div',
-            { style: S.tabs, role: 'tablist' },
-            TABS.map((item) =>
+            { style: S.toolbar },
+            h('span', { style: S.hint }, '显示模式：'),
+            MODES.map((item) =>
               h(
                 'button',
                 {
                   key: item.id,
                   type: 'button',
-                  role: 'tab',
-                  'aria-selected': tab === item.id,
-                  style: tab === item.id ? { ...S.tab, ...S.tabActive } : S.tab,
-                  onClick: () => setTab(item.id),
+                  style: mode === item.id ? { ...S.button, ...S.buttonPrimary } : S.button,
+                  'aria-pressed': mode === item.id,
+                  onClick: () => pickMode(item.id),
                 },
                 item.label,
               ),
             ),
+            h('span', { style: S.hint }, mode === 'simple' ? '简单模式：只看不写。要新增 / 编辑 / 同步 / 铺底，切到完整。' : '完整模式：五个分段都在，新增/编辑/删除/同步/铺底/认领/追加生长记录都能用。'),
           ),
-          tab === 'overview'
+          mode === 'full'
+            ? h(LocationBar, {
+                nonce: locationNonce,
+                onArchiveChanged: info.reload,
+                onScaffold: (target) => {
+                  setPreset({ root: target, nonce: Date.now() });
+                  setTab('overview');
+                },
+              })
+            : null,
+          mode === 'full' ? h('div', { style: S.metaRow }, h('span', null, `只读模式：${readOnly === null ? MISSING : readOnly ? '是' : '否'}`)) : null,
+          mode === 'full' ? h(Fail, { error: info.error, loading: info.loading && !info.data }) : null,
+          mode === 'full' ? h(WriteToggle, { onChanged: bumpWrite }) : null,
+          mode === 'full'
+            ? h(
+                'div',
+                { style: S.tabs, role: 'tablist' },
+                TABS.map((item) =>
+                  h(
+                    'button',
+                    {
+                      key: item.id,
+                      type: 'button',
+                      role: 'tab',
+                      'aria-selected': tab === item.id,
+                      style: tab === item.id ? { ...S.tab, ...S.tabActive } : S.tab,
+                      onClick: () => setTab(item.id),
+                    },
+                    item.label,
+                  ),
+                ),
+              )
+            : null,
+          // 简单模式那一行「更多 →」：切到完整模式并直接停在日记页（就是使用者说的"跳到完整模式的日记页"）。
+          mode === 'simple'
+            ? h(SimpleOverview, {
+                info,
+                onMore: () => {
+                  pickMode('full');
+                  setTab('diary');
+                },
+              })
+            : null,
+          mode === 'full' && tab === 'overview'
             ? h(Overview, {
                 write,
                 preset,
@@ -1342,10 +1695,10 @@ window.__ModuleLoader__.load({
                 },
               })
             : null,
-          tab === 'diary' ? h(DiaryPane, { write }) : null,
-          tab === 'state' ? h(StatePane, { write }) : null,
-          tab === 'events' ? h(EventsPane, null) : null,
-          tab === 'search' ? h(SearchPane, null) : null,
+          mode === 'full' && tab === 'diary' ? h(DiaryPane, { write }) : null,
+          mode === 'full' && tab === 'state' ? h(StatePane, { write }) : null,
+          mode === 'full' && tab === 'events' ? h(EventsPane, null) : null,
+          mode === 'full' && tab === 'search' ? h(SearchPane, null) : null,
         ),
       );
     }
