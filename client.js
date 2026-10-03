@@ -87,6 +87,7 @@ window.__ModuleLoader__.load({
       { word: '备份', desc: '打包档案备份' },
       { word: '收工', desc: '收尾：今天到这儿' },
       { word: '整理', desc: '整理本地文件，不用的删掉' },
+      { word: '收尾换会话', desc: '一条龙：日记 → 收工 → 整理 → 备份 → 换会话' },
     ];
 
     /** Console 前缀，好过滤。 */
