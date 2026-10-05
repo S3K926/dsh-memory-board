@@ -1,0 +1,10 @@
+# 这个文件必须留在仓库里：package.json 的 dsh.bundle.patch 指向它，
+# 缺了它宿主会拒绝安装（"缺少 patch 文件，请下载构建后的发布包"）。
+#
+# 这里只放"哪台机器都一样"的部分：一条 insert 声明。
+# 本机专属的值（档案根 / 设备名 / 时差）不写在这里 ——
+# 每台机器在自己的 profile 补丁层（~/.dsh/profiles/web/cordis.patch.yml）
+# 按 id 覆盖同名条目。
+- insert:
+    - id: memory-panel
+      name: 'dsh-memory-board'
