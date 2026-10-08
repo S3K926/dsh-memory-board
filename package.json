@@ -17,14 +17,15 @@
         "./package.json": "./package.json"
     },
     "files": [
-        "index.js",
-        "client.js",
-        "lib",
-        "templates",
-        "README.md",
-        "LICENSE",
-        "cordis.patch.example.yml"
-    ],
+    "index.js",
+    "client.js",
+    "lib",
+    "templates",
+    "cordis.patch.yml",
+    "cordis.patch.example.yml",
+    "README.md",
+    "LICENSE"
+  ],
     "meta": {
         "title": "记忆面板",
         "description": "本地记忆（Local Memory）· 把一份基于文件的记忆档案搬进设置页：概览 / 日记 / 状态 / 事件流 / 搜索，读写都带守卫。"
