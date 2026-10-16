@@ -33,7 +33,7 @@ window.__ModuleLoader__.load({
 
     // ─────────────────────── 简单 / 完整 两种显示模式（2026-10-03 加）
     //
-    // 使用者 2026-10-03 的原话：概览页那四张卡片铺满技术细节（连续性 / 元信息 / 字节 / 最后修改），看不懂。
+    // 有反馈（2026-10-03）提出：概览页那四张卡片铺满技术细节（连续性 / 元信息 / 字节 / 最后修改），看不懂。
     // 于是分两档，只影响这一层的渲染，不碰 router.js 与 lib/ 里任何数据逻辑：
     //   简单（默认）= 四张一句话卡片 + 最近 10 条日记（可逐条展开看全文，底部「更多 →」跳到完整模式的日记页）
     //                  + 当前状态（可展开看 mood_base 全文与挂着的完整列表）+ 一个搜索框；
@@ -63,13 +63,38 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /* 日记写法：散文（默认，2026-10-13 起的新口径）／六段式（老格式）。两种都要能用 —— 用户 2026-10-16 明确要求。 */
+    const DIARY_FORMAT_KEY = 'dsh-memory-board.diary-format';
+    const DIARY_FORMATS = [
+      { id: 'prose', label: '散文' },
+      { id: 'classic', label: '六段式' },
+    ];
+
+    function readDiaryFormat() {
+      try {
+        const store = globalThis.localStorage;
+        return store && store.getItem(DIARY_FORMAT_KEY) === 'classic' ? 'classic' : 'prose';
+      } catch {
+        return 'prose';
+      }
+    }
+
+    function saveDiaryFormat(format) {
+      try {
+        const store = globalThis.localStorage;
+        if (store) store.setItem(DIARY_FORMAT_KEY, format);
+      } catch {
+        /* 存不了就算了：下次打开回到散文 */
+      }
+    }
+
     // 客户端根上下文：apply() 里存下来。目录选择器要用它去软访问 uiWorkspace ——
     // 本插件只 inject 了 slots，绝不为了一个选择器去加 inject（加了就等于把整页押在别人的服务上）。
     let clientCtx = null;
 
     // ─────────────────────────────────── 指令菜单里的快捷词（2026-09-27 使用者点名要塞进这里的）
     //
-    // 使用者的原话：「不要专门做一个插件，日记的就加到本地记忆插件里」；
+    // 有反馈提出：「不要专门做一个插件，日记的就加到本地记忆插件里」；
     // 后来又补：「都放记忆」—— 于是 日记 / 备份 / 收工 三个词都归这里。
     // 做法：往输入框 ➕ 的**指令菜单**（官方那个 ➕，打开的就是输入 `/` 时的命令菜单）各注册一条指令，
     // 点一下 = 发一条**纯文本**词 —— 与使用者在键盘上手打再回车完全一样，
@@ -85,9 +110,7 @@ window.__ModuleLoader__.load({
     const QUICK_WORDS = [
       { word: '日记', desc: '更新日记（写进档案）' },
       { word: '备份', desc: '打包档案备份' },
-      { word: '收工', desc: '收尾：今天到这儿' },
-      { word: '整理', desc: '整理本地文件，不用的删掉' },
-      { word: '收尾换会话', desc: '一条龙：日记 → 收工 → 整理 → 备份 → 换会话' },
+      { word: '收尾', desc: '收尾：日记 + 备份 + 体检，然后换会话' },
     ];
 
     /** Console 前缀，好过滤。 */
@@ -116,7 +139,7 @@ window.__ModuleLoader__.load({
      *   ① `ctx.sessions.using(sessionId, { source }, ref => …)` 拿一个 Session 引用；
      *   ② `ctx.uiSession.bindingSource(ref).getSnapshot().props.inputActions` 才是输入动作。
      *
-     * 🔴 2026-10-01 修（用户原话「那些指令点了没反应也修修」）：
+     * 🔴 2026-10-01 修（有反馈「那些指令点了没反应也修修」）：
      *   老写法依赖的 `uiSession.resolve(sessionId)` 在 DSH 升级后**已经不在 UiSession 上了**
      *   （现在只有 bindingSource / provide / registerPendingInteraction / sessionStatus），
      *   所以按下去只会打一句「这个会话还没挂上输入框」、什么都不发生 —— 实测控制台抓到了这条警告。
@@ -191,26 +214,26 @@ window.__ModuleLoader__.load({
     // ───────────────────────────────────────────── 样式：只有主题令牌
 
     const S = {
-      section: { display: 'flex', flexDirection: 'column', gap: '12px', maxWidth: '880px', color: 'var(--dsw-alias-label-primary)' },
+      section: { display: 'flex', flexDirection: 'column', gap: '12px', maxWidth: '880px', width: '100%', minWidth: 0, boxSizing: 'border-box', color: 'var(--dsw-alias-label-primary)' },
       heading: { margin: 0, fontSize: '18px', fontWeight: 600 },
       intro: { margin: 0, fontSize: '13px', color: 'var(--dsw-alias-label-tertiary)' },
       metaRow: { display: 'flex', flexWrap: 'wrap', gap: '4px 18px', fontSize: '13px', color: 'var(--dsw-alias-label-secondary)' },
-      tabs: { display: 'flex', gap: '22px', alignItems: 'flex-end', borderBottom: '0.5px solid var(--dsw-alias-border-l2)' },
+      tabs: { display: 'flex', gap: '18px', overflowX: 'auto', whiteSpace: 'nowrap', alignItems: 'flex-end', borderBottom: '0.5px solid var(--dsw-alias-border-l2)' },
       tab: { font: 'inherit', fontSize: '13px', lineHeight: '20px', padding: '7px 1px 9px', background: 'none', border: 0, borderBottom: '2px solid transparent', color: 'var(--dsw-alias-label-tertiary)', cursor: 'pointer' },
       tabActive: { color: 'var(--dsw-alias-label-primary)', borderBottom: '2px solid var(--dsw-alias-label-primary)' },
       cards: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '10px' },
       card: { display: 'flex', flexDirection: 'column', gap: '6px', minWidth: 0, padding: '10px 12px', border: '0.5px solid var(--dsw-alias-border-l2)', borderRadius: '8px' },
       cardTitle: { fontSize: '13px', fontWeight: 600 },
-      row: { display: 'flex', justifyContent: 'space-between', gap: '10px', fontSize: '12px', color: 'var(--dsw-alias-label-secondary)' },
+      row: { display: 'flex', justifyContent: 'space-between', gap: '10px', minWidth: 0, fontSize: '12px', color: 'var(--dsw-alias-label-secondary)' },
       rowValue: { color: 'var(--dsw-alias-label-primary)', textAlign: 'right', wordBreak: 'break-all', fontVariantNumeric: 'tabular-nums' },
-      block: { display: 'flex', flexDirection: 'column', gap: '8px', padding: '10px 12px', border: '0.5px solid var(--dsw-alias-border-l2)', borderRadius: '8px' },
+      block: { display: 'flex', flexDirection: 'column', gap: '8px', minWidth: 0, padding: '10px 12px', border: '0.5px solid var(--dsw-alias-border-l2)', borderRadius: '8px' },
       blockTitle: { margin: 0, fontSize: '14px', fontWeight: 600 },
       toolbar: { display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' },
       hint: { fontSize: '12px', color: 'var(--dsw-alias-label-tertiary)', margin: 0 },
       error: { fontSize: '13px', color: 'var(--dsw-alias-state-error-primary)', whiteSpace: 'pre-wrap', margin: 0 },
       notice: { fontSize: '13px', color: 'var(--dsw-alias-state-success-primary)', whiteSpace: 'pre-wrap', margin: 0 },
       warning: { fontSize: '13px', color: 'var(--dsw-alias-state-warn-primary)', whiteSpace: 'pre-wrap', margin: 0 },
-      list: { display: 'flex', flexDirection: 'column', maxHeight: '420px', overflowY: 'auto', border: '0.5px solid var(--dsw-alias-border-l2)', borderRadius: '8px' },
+      list: { display: 'flex', flexDirection: 'column', maxHeight: '55vh', overflowY: 'auto', border: '0.5px solid var(--dsw-alias-border-l2)', borderRadius: '8px' },
       listRow: { display: 'flex', gap: '10px', alignItems: 'baseline', padding: '7px 10px', fontSize: '12.5px', cursor: 'pointer', borderBottom: '0.5px solid var(--dsw-alias-border-l1)' },
       listIndex: { color: 'var(--dsw-alias-label-tertiary)', fontVariantNumeric: 'tabular-nums', minWidth: '64px' },
       listMain: { flex: '1 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
@@ -219,8 +242,8 @@ window.__ModuleLoader__.load({
       buttonPrimary: { background: 'var(--dsw-alias-button-primary-fill)', color: 'var(--dsw-alias-label-primary-foreground)', border: '0.5px solid transparent' },
       buttonDanger: { background: 'var(--dsw-alias-interactive-bg-hover-danger)', border: '0.5px solid var(--dsw-alias-state-error-secondary)', color: 'var(--dsw-alias-state-error-primary)' },
       input: { font: 'inherit', fontSize: '12.5px', width: '100%', boxSizing: 'border-box', padding: '5px 8px', borderRadius: '6px', border: '0.5px solid var(--dsw-alias-border-l3)', background: 'var(--dsw-alias-bg-l1)', color: 'var(--dsw-alias-label-primary)' },
-      textarea: { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', fontSize: '12.5px', lineHeight: 1.6, width: '100%', boxSizing: 'border-box', minHeight: '220px', resize: 'vertical', padding: '8px 10px', borderRadius: '6px', border: '0.5px solid var(--dsw-alias-border-l3)', background: 'var(--dsw-alias-bg-l1)', color: 'var(--dsw-alias-label-primary)' },
-      pre: { margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', fontSize: '12.5px', lineHeight: 1.6, maxHeight: '520px', overflow: 'auto', padding: '10px 12px', borderRadius: '8px', border: '0.5px solid var(--dsw-alias-border-l2)', background: 'var(--dsw-alias-bg-l1)' },
+      textarea: { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', fontSize: '12.5px', lineHeight: 1.6, width: '100%', boxSizing: 'border-box', minHeight: '180px', resize: 'vertical', padding: '8px 10px', borderRadius: '6px', border: '0.5px solid var(--dsw-alias-border-l3)', background: 'var(--dsw-alias-bg-l1)', color: 'var(--dsw-alias-label-primary)' },
+      pre: { margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', fontSize: '12.5px', lineHeight: 1.6, maxHeight: '60vh', overflow: 'auto', padding: '10px 12px', borderRadius: '8px', border: '0.5px solid var(--dsw-alias-border-l2)', background: 'var(--dsw-alias-bg-l1)' },
       grid2: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '8px' },
       field: { display: 'flex', flexDirection: 'column', gap: '4px', minWidth: 0 },
       label: { fontSize: '12px', color: 'var(--dsw-alias-label-tertiary)' },
@@ -1082,7 +1105,7 @@ window.__ModuleLoader__.load({
           ? h(
               'div',
               { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
-              h(Field, { label: '目标目录（必须是一个新的空目录，自己填）' }, h('input', { style: S.input, value: root, onChange: (event) => setRoot(event.target.value), placeholder: '例如 D:\\dsh\\新设备记忆' })),
+              h(Field, { label: '目标目录（必须是一个新的空目录，自己填）' }, h('input', { style: S.input, value: root, onChange: (event) => setRoot(event.target.value), placeholder: '例如 D:\\notes\\新设备记忆' })),
               h(Field, { label: '设备标签' }, h('input', { style: S.input, value: device, onChange: (event) => setDevice(event.target.value), placeholder: '【设备】' })),
               h(
                 'div',
@@ -1202,7 +1225,7 @@ window.__ModuleLoader__.load({
 
     // ───────────────────────────────────────────── 日记
 
-    function DiaryPane({ write }) {
+    function DiaryPane({ write, defaultFormat }) {
       const list = useApi('/diary');
       const [seq, setSeq] = useState(null);
       const data = list.data || {};
@@ -1223,7 +1246,7 @@ window.__ModuleLoader__.load({
           h('span', { style: S.hint }, `共 ${data.count === undefined ? MISSING : data.count} 条（列表按倒序：最新在前）`),
           h('button', { type: 'button', style: S.button, onClick: refresh }, '刷新'),
         ),
-        h(DiaryAppendForm, { write, onDone: refresh }),
+        h(DiaryAppendForm, { write, onDone: refresh, defaultFormat }),
         h(
           'div',
           { style: S.list },
@@ -1287,10 +1310,15 @@ window.__ModuleLoader__.load({
       );
     }
 
-    const EMPTY_DIARY_FORM = { date: '', time: '', device: '', event: '', userMood: '', moodTags: '', notes: '', details: '', moodTail: '' };
+    const EMPTY_DIARY_FORM = { date: '', time: '', device: '', body: '', event: '', userMood: '', moodTags: '', notes: '', details: '', moodTail: '' };
 
-    function DiaryAppendForm({ write, onDone }) {
+    function DiaryAppendForm({ write, onDone, defaultFormat }) {
       const [open, setOpen] = useState(false);
+      // 写法默认取设置面板里那个开关（默认散文）；设置变了也跟着走，这里仍可临时切。
+      const [mode, setMode] = useState(defaultFormat || 'prose');
+      useEffect(() => {
+        setMode(defaultFormat || 'prose');
+      }, [defaultFormat]);
       const [form, setForm] = useState(EMPTY_DIARY_FORM);
       const [message, setMessage] = useState(null);
       const [busy, setBusy] = useState(false);
@@ -1301,8 +1329,16 @@ window.__ModuleLoader__.load({
         setMessage(null);
         const now = new Date();
         const pad = (value) => String(value).padStart(2, '0');
+        const payload = { ...form };
+        // 只送当前模式那一边的字段 —— 两边都有值会让后端判不清该走哪种格式
+        if (mode === 'prose') {
+          payload.event = ''; payload.userMood = ''; payload.moodTags = '';
+          payload.notes = ''; payload.details = ''; payload.moodTail = '';
+        } else {
+          payload.body = '';
+        }
         const result = await send('/diary/append', {
-          ...form,
+          ...payload,
           date: form.date || `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`,
           time: form.time || `${pad(now.getHours())}:${pad(now.getMinutes())}`,
           confirm: 'yes',
@@ -1335,16 +1371,29 @@ window.__ModuleLoader__.load({
                 h(Field, { label: '时间（留空用现在）' }, h('input', { style: S.input, value: form.time, onChange: set('time'), placeholder: 'HH:MM' })),
                 h(Field, { label: '设备标签（可留空）' }, h('input', { style: S.input, value: form.device, onChange: set('device'), placeholder: '【PC】（留空自动补本机）' })),
               ),
-              h(Field, { label: 'event_description（这一轮在做什么）' }, h('textarea', { style: { ...S.textarea, minHeight: '90px' }, value: form.event, onChange: set('event') })),
-              h(Field, { label: 'user_mood（用户心情，一句话）' }, h('input', { style: S.input, value: form.userMood, onChange: set('userMood') })),
-              h(Field, { label: 'mood_tags（3~5 个短标签，顿号分隔）' }, h('input', { style: S.input, value: form.moodTags, onChange: set('moodTags') })),
-              h(Field, { label: 'notes（小笔记，可多行）' }, h('textarea', { style: { ...S.textarea, minHeight: '70px' }, value: form.notes, onChange: set('notes') })),
-              h(Field, { label: 'lively_details（一行一个细节）' }, h('textarea', { style: { ...S.textarea, minHeight: '70px' }, value: form.details, onChange: set('details') })),
-              h(Field, { label: 'mood_tail（收尾心情句）' }, h('input', { style: S.input, value: form.moodTail, onChange: set('moodTail') })),
               h(
                 'div',
                 { style: S.toolbar },
-                h('button', { type: 'button', style: { ...S.button, ...S.buttonPrimary }, disabled: busy || form.event.trim() === '' || !write.allowed, onClick: submit }, '写入日记'),
+                h('span', { style: S.hint }, '写法：'),
+                h('button', { type: 'button', style: mode === 'prose' ? { ...S.button, ...S.buttonPrimary } : S.button, onClick: () => setMode('prose') }, '散文'),
+                h('button', { type: 'button', style: mode === 'classic' ? { ...S.button, ...S.buttonPrimary } : S.button, onClick: () => setMode('classic') }, '六段式'),
+              ),
+              mode === 'prose'
+                ? h(Field, { label: '正文（散文：第一人称、口语、有细节）' }, h('textarea', { style: { ...S.textarea, minHeight: '200px' }, value: form.body, onChange: set('body') }))
+                : h(
+                    'div',
+                    { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
+                    h(Field, { label: 'event_description（这一轮在做什么）' }, h('textarea', { style: { ...S.textarea, minHeight: '90px' }, value: form.event, onChange: set('event') })),
+                    h(Field, { label: 'user_mood（用户心情，一句话）' }, h('input', { style: S.input, value: form.userMood, onChange: set('userMood') })),
+                    h(Field, { label: 'mood_tags（3~5 个短标签，顿号分隔）' }, h('input', { style: S.input, value: form.moodTags, onChange: set('moodTags') })),
+                    h(Field, { label: 'notes（小笔记，可多行）' }, h('textarea', { style: { ...S.textarea, minHeight: '70px' }, value: form.notes, onChange: set('notes') })),
+                    h(Field, { label: 'lively_details（一行一个细节）' }, h('textarea', { style: { ...S.textarea, minHeight: '70px' }, value: form.details, onChange: set('details') })),
+                    h(Field, { label: 'mood_tail（收尾心情句）' }, h('input', { style: S.input, value: form.moodTail, onChange: set('moodTail') })),
+                  ),
+              h(
+                'div',
+                { style: S.toolbar },
+                h('button', { type: 'button', style: { ...S.button, ...S.buttonPrimary }, disabled: busy || (mode === 'prose' ? form.body.trim() === '' : form.event.trim() === '') || !write.allowed, onClick: submit }, '写入日记'),
                 write.allowed ? null : h('span', { style: S.hint }, '写入开关没开（或配置只读）。'),
               ),
             )
@@ -1596,6 +1645,12 @@ window.__ModuleLoader__.load({
       const [tab, setTab] = useState('overview');
       // 简单 / 完整：默认简单，选择存 localStorage（读/存失败都退回简单）。
       const [mode, setMode] = useState(readMode);
+      // 日记写法：默认散文，同样存 localStorage（读/存失败都退回散文）。
+      const [diaryFormat, setDiaryFormat] = useState(readDiaryFormat);
+      const pickDiaryFormat = useCallback((next) => {
+        setDiaryFormat(next);
+        saveDiaryFormat(next);
+      }, []);
       const pickMode = useCallback((next) => {
         setMode(next);
         saveMode(next);
@@ -1624,6 +1679,24 @@ window.__ModuleLoader__.load({
           mode === 'full'
             ? h('p', { style: S.intro }, '记忆档案的看 / 搜 / 编 / 新增。文件仍是权威：不搬家、不建数据库、不改任何文件格式；跨设备合并仍走档案里原有的那几个脚本。')
             : null,
+          h(
+            'div',
+            { style: S.toolbar },
+            h('span', { style: S.hint }, '日记写法：'),
+            DIARY_FORMATS.map((item) =>
+              h(
+                'button',
+                {
+                  key: item.id,
+                  type: 'button',
+                  style: diaryFormat === item.id ? { ...S.button, ...S.buttonPrimary } : S.button,
+                  'aria-pressed': diaryFormat === item.id,
+                  onClick: () => pickDiaryFormat(item.id),
+                },
+                item.label,
+              ),
+            ),
+          ),
           h(
             'div',
             { style: S.toolbar },
@@ -1696,7 +1769,7 @@ window.__ModuleLoader__.load({
                 },
               })
             : null,
-          mode === 'full' && tab === 'diary' ? h(DiaryPane, { write }) : null,
+          mode === 'full' && tab === 'diary' ? h(DiaryPane, { write, defaultFormat: diaryFormat }) : null,
           mode === 'full' && tab === 'state' ? h(StatePane, { write }) : null,
           mode === 'full' && tab === 'events' ? h(EventsPane, null) : null,
           mode === 'full' && tab === 'search' ? h(SearchPane, null) : null,
