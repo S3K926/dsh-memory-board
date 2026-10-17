@@ -33,7 +33,7 @@ window.__ModuleLoader__.load({
 
     // ─────────────────────── 简单 / 完整 两种显示模式（2026-10-03 加）
     //
-    // 有反馈（2026-10-03）提出：概览页那四张卡片铺满技术细节（连续性 / 元信息 / 字节 / 最后修改），看不懂。
+    // 使用者 2026-10-03 的原话：概览页那四张卡片铺满技术细节（连续性 / 元信息 / 字节 / 最后修改），看不懂。
     // 于是分两档，只影响这一层的渲染，不碰 router.js 与 lib/ 里任何数据逻辑：
     //   简单（默认）= 四张一句话卡片 + 最近 10 条日记（可逐条展开看全文，底部「更多 →」跳到完整模式的日记页）
     //                  + 当前状态（可展开看 mood_base 全文与挂着的完整列表）+ 一个搜索框；
@@ -94,7 +94,7 @@ window.__ModuleLoader__.load({
 
     // ─────────────────────────────────── 指令菜单里的快捷词（2026-09-27 使用者点名要塞进这里的）
     //
-    // 有反馈提出：「不要专门做一个插件，日记的就加到本地记忆插件里」；
+    // 使用者的原话：「不要专门做一个插件，日记的就加到本地记忆插件里」；
     // 后来又补：「都放记忆」—— 于是 日记 / 备份 / 收工 三个词都归这里。
     // 做法：往输入框 ➕ 的**指令菜单**（官方那个 ➕，打开的就是输入 `/` 时的命令菜单）各注册一条指令，
     // 点一下 = 发一条**纯文本**词 —— 与使用者在键盘上手打再回车完全一样，
@@ -139,7 +139,7 @@ window.__ModuleLoader__.load({
      *   ① `ctx.sessions.using(sessionId, { source }, ref => …)` 拿一个 Session 引用；
      *   ② `ctx.uiSession.bindingSource(ref).getSnapshot().props.inputActions` 才是输入动作。
      *
-     * 🔴 2026-10-01 修（有反馈「那些指令点了没反应也修修」）：
+     * 🔴 2026-10-01 修（用户原话「那些指令点了没反应也修修」）：
      *   老写法依赖的 `uiSession.resolve(sessionId)` 在 DSH 升级后**已经不在 UiSession 上了**
      *   （现在只有 bindingSource / provide / registerPendingInteraction / sessionStatus），
      *   所以按下去只会打一句「这个会话还没挂上输入框」、什么都不发生 —— 实测控制台抓到了这条警告。
@@ -1026,6 +1026,7 @@ window.__ModuleLoader__.load({
         h(Block, { title: `📔 最近的日记（最近 ${Math.min(RECENT_COUNT, entries.length)} 条）` }, h(RecentDiary, { entries, onMore })),
         h(CurrentState, { title: '🌤 现在', moodBase: state.moodBase, unfinished: state.unfinished }),
         h(Block, { title: '🔍 搜索' }, h(SearchPane, null)),
+        h(Block, { title: '🔁 跨重启续跑' }, h(BootTasksSwitch, null)),
       );
     }
 
@@ -1105,7 +1106,7 @@ window.__ModuleLoader__.load({
           ? h(
               'div',
               { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
-              h(Field, { label: '目标目录（必须是一个新的空目录，自己填）' }, h('input', { style: S.input, value: root, onChange: (event) => setRoot(event.target.value), placeholder: '例如 D:\\notes\\新设备记忆' })),
+              h(Field, { label: '目标目录（必须是一个新的空目录，自己填）' }, h('input', { style: S.input, value: root, onChange: (event) => setRoot(event.target.value), placeholder: '例如 D:\\dsh\\新设备记忆' })),
               h(Field, { label: '设备标签' }, h('input', { style: S.input, value: device, onChange: (event) => setDevice(event.target.value), placeholder: '【设备】' })),
               h(
                 'div',
@@ -1602,6 +1603,35 @@ window.__ModuleLoader__.load({
           ),
           (data.entries || []).length === 0 ? h('p', { style: { ...S.hint, padding: '10px 12px' } }, '事件流是空的。') : null,
         ),
+      );
+    }
+
+    /** 跨重启续跑的开关（2026-10-17 他点名要的）。关掉后宿主不再把队列端给我，但队列文件原样留着。 */
+    function BootTasksSwitch() {
+      const prefs = useApi('/prefs');
+      const on = prefs.data ? prefs.data.bootTasksEnabled !== false : true;
+      const [busy, setBusy] = useState(false);
+      const toggle = async (event) => {
+        const next = event.target.checked;
+        setBusy(true);
+        try {
+          await send('/prefs', { bootTasksEnabled: next });
+        } finally {
+          setBusy(false);
+          prefs.reload();
+        }
+      };
+      return h(
+        'div',
+        { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
+        h(
+          'label',
+          { style: { display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' } },
+          h('input', { type: 'checkbox', checked: on, disabled: busy || prefs.loading, onChange: toggle }),
+          h('span', null, '宿主重启后，把上一轮没干完的活端出来提醒我（续跑队列）'),
+        ),
+        h('p', { style: S.hint }, '宿主的进程一停，正在跑的子代理不会自己接着跑 —— 这个开关管的就是「重启后要不要把这些活端出来提醒我」。关掉后队列文件照样留着（不丢、不消费），只是不再提醒。'),
+        prefs.error ? h('p', { style: S.warning }, prefs.error) : null,
       );
     }
 

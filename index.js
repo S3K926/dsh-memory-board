@@ -33,6 +33,7 @@
 
 import { createRouter, createRuntime } from './lib/router.js';
 import { runSelftest } from './lib/selftest.js';
+import { bootTaskPatch, compactionPatch, noteCompaction, primeBootTasks } from './lib/boot-tasks.js';
 
 /**
  * 插件名与服务声明。
@@ -63,6 +64,36 @@ function apply(ctx, config = {}) {
       runtime.log(`路由注册失败：${route.path} —— ${error && error.message ? error.message : String(error)}`);
     }
   }
+
+  // ── 跨重启续跑（2026-10-17 从 `dsh-auto-handoff` 搬过来；那个插件退役，这个能力留下）──
+  // 宿主一停，正在跑的子代理不会自己接着跑；没干完的活落成 boot-tasks.json，
+  // 这里在**下一轮的第一发**把它端给接手的我一次，接不接由我判断。
+  primeBootTasks();
+  // 官方压缩一开始就记一笔（`compaction/start`）—— 压缩拦不住，但下一轮能提醒我补日记。
+  // ⚠ 这个监听不用 watermark：它只记状态、不改事件流，返回什么都不影响下游。
+  ctx.on('session/event', (session, event) => {
+    try {
+      if (event && event.type === 'compaction/start') {
+        noteCompaction({ at: new Date().toISOString(), turn: event.data ? event.data.turn : undefined });
+        runtime.log(`官方压缩开始（turn ${event.data ? event.data.turn : '?'}）→ 下一轮提醒补日记`);
+      }
+    } catch (error) {
+      runtime.log(`压缩监听出错（不影响主流程）：${error && error.message ? error.message : String(error)}`);
+    }
+  });
+  ctx.effect(() => {
+    const off = ctx.on('agent/pre-step', async (payload, next) => {
+      const decision = await next();
+      try {
+        // 续跑队列优先（它带的是"没干完的活"），压缩提醒跟在后面。
+        return compactionPatch(payload, bootTaskPatch(payload, decision));
+      } catch (error) {
+        runtime.log(`提示注入失败（原样放行）：${error && error.message ? error.message : String(error)}`);
+        return decision;
+      }
+    });
+    return () => off?.();
+  });
 }
 
 if (process.argv.includes('--selftest')) {
