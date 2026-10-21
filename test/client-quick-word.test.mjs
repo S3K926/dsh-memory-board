@@ -79,6 +79,31 @@ function makeCtx({ inputActions, resolve, injectRuns = true } = {}) {
     effect(fn) {
       return fn()
     },
+    // 2026-10-17 补：实现自 2026-10-01 起改走**新 API**（`ctx.get('sessions').using(...)` →
+    // `uiSession.bindingSource(ref).getSnapshot().props.inputActions`），而这份脚手架还停在老 API，
+    // 于是三条用例一直红（不是实现坏，是测试没跟上）。这里补一个**同步**的 `get()`，让新路跑得通。
+    get(name) {
+      if (name === 'sessions') {
+        return {
+          using(sessionId, _opts, cb) {
+            cb({ id: sessionId })
+            return Promise.resolve()
+          },
+        }
+      }
+      if (name === 'uiSession') {
+        return {
+          bindingSource() {
+            return {
+              getSnapshot() {
+                return { props: { inputActions } }
+              },
+            }
+          },
+        }
+      }
+      return undefined
+    },
   }
   const seenInjections = []
   const ctx = {
@@ -105,7 +130,8 @@ test('元信息：惰性工厂形式，id 等于包名，模块级 inject 仍只
   assert.deepEqual(Array.from(mod.inject), ['slots'])
 })
 
-test('设置页「本地记忆」照旧注册，同时多四条 action 指令：日记 / 备份 / 收工 / 整理', async () => {
+// 2026-10-17 修：菜单 2026-10-13 已从 6 条精简到 3 条（日记／备份／收尾），这条测试没跟上 → 改成 3 条。
+test('设置页「本地记忆」照旧注册，同时多三条 action 指令：日记 / 备份 / 收尾', async () => {
   const mod = await loadClient()
   const { ctx, registered, slotRegistrations, seenInjections } = makeCtx({
     inputActions: { setDraft() {}, submit() {} },
@@ -116,10 +142,10 @@ test('设置页「本地记忆」照旧注册，同时多四条 action 指令：
   assert.equal(slotRegistrations[0].id, 'memory')
   assert.equal(slotRegistrations[0].label, '本地记忆')
 
-  assert.deepEqual(seenInjections, [['commandUi', 'uiSession']])
+  assert.deepEqual(seenInjections, [['commandUi', 'uiSession', 'sessions']])
   assert.deepEqual(
     registered.map((c) => c.name),
-    ['日记', '备份', '收工', '整理'],
+    ['日记', '备份', '收尾', '整理', '回流包'],
   )
   for (const c of registered) {
     assert.equal(c.ui.kind, 'action')

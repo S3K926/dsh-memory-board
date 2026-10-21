@@ -5,12 +5,28 @@
 > · **本机偏好层**（走补丁 `/root/dsh-memory-board-mobile-fix.py`，8 处）：指令菜单 6→3 条、手机适配 7 处。
 
 
+> **2026-10-21** ｜ **安全收紧：写路由只收 POST ＋ 校验来源** ｜ 此前 9 条写路由同时接受 `GET`，`confirm=yes` 放在 query 里；DSH 在本机跑，浏览器里任意网页都能构造一个指向 localhost 的请求触发写入（CORS 只挡读响应，不挡发请求）。现在：写路由 `methods: ['POST']`；新增 `guardWrite` —— `Origin` 缺失（curl／本机命令行）放行，`Origin: null` 与其他来源返回 403。面板本来就全走 POST，无需改。 ｜ 验证：`node --check` ＋ `node index.js --selftest` **104/104**。
+
 > **规矩同 `dsh-auto-handoff/CHANGELOG.md`**：每次改动在下面记一行 —— 日期 ｜ 改了什么 ｜ 为什么 ｜ 怎么验的。
 > ⚠ **本插件已发布到自己的仓库**（账号 `S3K926`），所以**本机的定制不直接改源码** ——
 > 而是走补丁 `/root/dsh-memory-board-mobile-fix.py`（幂等 / `--revert` / 锚点找不到就停下）。
 > **上游（发布版）更新后**：重装 → `python3 /root/dsh-memory-board-mobile-fix.py --check` → 缺了就补。
 
 ---
+
+## 1.2.0（当前）
+
+### 2026-10-18
+- **新增「回流包」快捷指令**（命令菜单）：`{ word: '回流包', desc: '回流包：把档案＋技能＋宿主配置＋补丁打成一份，发给另一台设备' }`。
+  和「日记／备份／收尾」一样，它只是把词发过来，具体动作由接手的 AI 做。
+- 验证：`test/client-quick-word.test.mjs` **5/5**（期望从 3 条改成 4 条）。
+
+## 1.1.1（当前）
+
+### 2026-10-18
+- **修指令文案**：命令菜单里「收尾」的描述原来写着「日记 + 备份 + 体检，**然后换会话**」——
+  换会话已退役，改成「（不再换会话）」。`client.js` 的 `QUICK_WORDS` 表。
+- 验证：`--selftest` **104/104**、`test/boot-tasks.test.mjs` **10/10**。
 
 ## 1.1.0（当前）
 
