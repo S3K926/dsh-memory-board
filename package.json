@@ -1,6 +1,6 @@
 {
     "name": "dsh-memory-board",
-    "version": "1.3.1",
+    "version": "1.3.2",
     "description": "本地记忆（Local Memory）· Memory panel for the DSH web settings page: read, search, append and carefully edit a file-based memory archive.",
     "type": "module",
     "license": "MIT",
