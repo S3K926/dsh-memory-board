@@ -7,6 +7,8 @@
 
 > **2026-10-21** ｜ **安全收紧：写路由只收 POST ＋ 校验来源** ｜ 此前 9 条写路由同时接受 `GET`，`confirm=yes` 放在 query 里；DSH 在本机跑，浏览器里任意网页都能构造一个指向 localhost 的请求触发写入（CORS 只挡读响应，不挡发请求）。现在：写路由 `methods: ['POST']`；新增 `guardWrite` —— `Origin` 缺失（curl／本机命令行）放行，`Origin: null` 与其他来源返回 403。面板本来就全走 POST，无需改。 ｜ 验证：`node --check` ＋ `node index.js --selftest` **104/104**。
 
+> **2026-10-21** ｜ 修写盘 TOCTOU（代码评审提出） ｜ `writeWithGuards` 原来是「读文件 → 算指纹 → 改 → 备份 → rename」，从读到写之间别的进程（同步脚本）改了文件，rename 会把对方改动直接盖掉。现在**写之前再核一次指纹**，变了就返回 `changed-since-read` 拒写。 ｜ 验证：`node --check` ＋ `--selftest` **104/104**。
+
 > **规矩同 `dsh-auto-handoff/CHANGELOG.md`**：每次改动在下面记一行 —— 日期 ｜ 改了什么 ｜ 为什么 ｜ 怎么验的。
 > ⚠ **本插件已发布到自己的仓库**（账号 `S3K926`），所以**本机的定制不直接改源码** ——
 > 而是走补丁 `/root/dsh-memory-board-mobile-fix.py`（幂等 / `--revert` / 锚点找不到就停下）。
