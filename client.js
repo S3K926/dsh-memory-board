@@ -740,6 +740,7 @@ window.__ModuleLoader__.load({
             h(Row, { label: '最后一条', value: stream.last }),
             h(Row, { label: '文件大小', value: fmtBytes(stream.bytes) }),
             h(Row, { label: '最后修改', value: fmtTime(stream.mtime) }),
+            h(Row, { label: '写入备份', value: info.data && info.data.backup ? `${fmtBytes(info.data.backup.bytes)} / ${info.data.backup.files} 份${info.data.backup.warn ? ' ⚠ 该清了' : ''}` : null }),
           ),
         ),
         h(GrowthAppend, { write, onDone: info.reload }),
@@ -1278,7 +1279,13 @@ window.__ModuleLoader__.load({
         setBusy(true);
         setMessage(null);
         const result = await send('/diary/delete', { seq, ack, fp: detail.data ? detail.data.fingerprint : fingerprint, confirm: 'yes' });
-        setMessage(result.ok ? `已真删 #${seq}。删掉的内容存在：${result.archive || MISSING}` : explain(result));
+        // 2026-10-21 修：删不存在的条目时后端返回 ok+changed:false（幂等），原来这里照样显示「已真删」，
+        // 打错序号会以为删成功了。改成明确说「没找到、未做改动」。
+        setMessage(!result.ok
+          ? explain(result)
+          : (result.changed === false
+            ? `没找到 #${seq}（可能已经删过了），未做任何改动。`
+            : `已真删 #${seq}。删掉的内容存在：${result.archive || MISSING}`));
         setBusy(false);
         if (result.ok) onChanged();
       };
@@ -1526,7 +1533,11 @@ window.__ModuleLoader__.load({
         setBusy(true);
         setMessage(null);
         const result = await send('/state/delete', { title, ack, fp: detail.data ? detail.data.fingerprint : fingerprint, confirm: 'yes' });
-        setMessage(result.ok ? `已真删这一节。删掉的内容存在：${result.archive || MISSING}` : explain(result));
+        setMessage(!result.ok
+          ? explain(result)
+          : (result.changed === false
+            ? '没找到这一节（可能已经删过了），未做任何改动。'
+            : `已真删这一节。删掉的内容存在：${result.archive || MISSING}`));
         setBusy(false);
         if (result.ok) {
           onChanged();
